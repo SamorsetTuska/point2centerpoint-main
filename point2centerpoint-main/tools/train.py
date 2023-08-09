@@ -43,8 +43,8 @@ def parse_config():
     parser.add_argument('--ckpt', type=str, default=None, help='checkpoint to start from')
     parser.add_argument('--pretrained_model', type=str,
                         # default="/data/xzhou/projects/synchronous/OpenPCDet/output/kitti_models/point2centerpoint/default/ckpt/checkpoint_epoch_80.pth",
-                        # default='/home/xzhou/checkpoint_epoch_30.pth',
-                        default=None,
+                        default='/home/ipad_3d/TSF/point2centerpoint-main/checkpoint_epoch_70.pth',
+                        # default=None,
                         help='pretrained_model')
     parser.add_argument('--launcher', choices=['none', 'pytorch', 'slurm'], default='none')
     parser.add_argument('--tcp_port', type=int, default=19888, help='tcp port for distrbuted training')
