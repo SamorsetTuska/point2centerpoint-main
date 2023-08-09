@@ -1,0 +1,37 @@
+## This is the minimal config file for an NNI experiment.
+## Use "nnictl create --config config.yml" to launch this experiment.
+# Afterwards, you can check "config_detailed.yml" for more explanation.
+
+searchSpaceFile: search_space_2.json
+#trialCommand: python3 train_my.py --cfg_file  ./cfgs/kitti_models/pointpillar.yaml # NOTE: change "python3" to "python" if you are using Windows
+#trialCommand: python3 mnist.py --cfg_file
+trialCommand: CUDA_VISIBLE_DEVICES=2,3 python -m torch.distributed.launch --nproc_per_node=2 --rdzv_endpoint=localhost:12313 train_my.py --launcher pytorch --cfg_file cfgs/kitti_models/point2centerpoint.yaml --tcp_port 10086
+
+trialGpuNumber: 2 #gpu数量
+trialConcurrency: 1
+tuner:
+  name: Random
+#  classArgs:
+#    optimize_mode: maximize
+
+
+trainingService:
+  platform: local
+  useActiveGPU: True
+  gpuIndices: 2,3
+
+# This is the minimal config file for an NNI experiment.
+# Use "nnictl create --config config.yml" to launch this experiment.
+# Afterwards, you can check "config_detailed.yml" for more explanation.
+
+#searchSpaceFile: search_space.json
+#trialCommand: python3 mnist.py  # NOTE: change "python3" to "python" if you are using Windows
+#trialGpuNumber: 0
+#trialConcurrency: 1
+#tuner:
+#  name: TPE
+#  classArgs:
+#    optimize_mode: maximize
+#trainingService:
+#  platform: local
+#  useActiveGPU: True

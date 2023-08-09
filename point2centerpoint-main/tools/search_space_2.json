@@ -1,0 +1,23 @@
+{
+    "combine_params":
+    {
+        "_type" : "choice",
+        "_value" : [
+
+          {"lr": 0.003, "CLASS_WEIGHT": 3.0,"GIOU_WEIGHT": 2.0,"L1_WEIGHT": 5.0},
+          {"lr": 0.003, "CLASS_WEIGHT": 2.0,"GIOU_WEIGHT": 2.0,"L1_WEIGHT": 5.0},
+          {"lr": 0.003, "CLASS_WEIGHT": 3.0,"GIOU_WEIGHT": 1.0,"L1_WEIGHT": 5.0},
+          {"lr": 0.003, "CLASS_WEIGHT": 2.0,"GIOU_WEIGHT": 1.0,"L1_WEIGHT": 5.0},
+          {"lr": 0.003, "CLASS_WEIGHT": 4.0,"GIOU_WEIGHT": 2.0,"L1_WEIGHT": 5.0},
+          {"lr": 0.003, "CLASS_WEIGHT": 2.0,"GIOU_WEIGHT": 1.0,"L1_WEIGHT": 4.0},
+          {"lr": 0.003, "CLASS_WEIGHT": 2.0,"GIOU_WEIGHT": 2.0,"L1_WEIGHT": 4.0},
+          {"lr": 0.003, "CLASS_WEIGHT": 2.0,"GIOU_WEIGHT": 1.0,"L1_WEIGHT": 3.0},
+          {"lr": 0.003, "CLASS_WEIGHT": 2.0,"GIOU_WEIGHT": 2.0,"L1_WEIGHT": 3.0},
+          {"lr": 0.003, "CLASS_WEIGHT": 1.0,"GIOU_WEIGHT": 1.0,"L1_WEIGHT": 3.0},
+          {"lr": 0.003, "CLASS_WEIGHT": 1.0,"GIOU_WEIGHT": 1.0,"L1_WEIGHT": 1.0}
+        ]
+
+
+
+    }
+}

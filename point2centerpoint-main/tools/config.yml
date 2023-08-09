@@ -1,0 +1,31 @@
+searchSpaceFile: search_space_1.json
+
+trialCommand: python -m torch.distributed.launch --nproc_per_node=4 --rdzv_endpoint=localhost:12312 train_my.py --launcher pytorch --cfg_file cfgs/kitti_models/point2centerpoint.yaml
+
+trialGpuNumber: 4 #gpu数量
+trialConcurrency: 1
+tuner:
+  name: random
+#  name: DNGO
+  classArgs:
+#    max_budget: 27
+#    min_budget: 1
+#    eta: 3
+    optimize_mode : maximize
+#  classArgs:
+#    optimize_mode: maximize
+#    min_budget: 1,
+#    max_budget: 27,
+#    eta: 3,
+#    min_points_in_model: 7,
+#    top_n_percent: 15,
+#    num_samples: 64,
+#    random_fraction: 0.33,
+#    bandwidth_factor: 3.0,
+#    min_bandwidth: 0.001
+
+trainingService:
+  platform: local
+  useActiveGPU: True
+  gpuIndices: 0,1,2,3
+
