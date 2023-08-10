@@ -12,7 +12,7 @@ from matplotlib import pyplot as plt
 from torch.nn.init import kaiming_normal_
 from ...utils import loss_utils
 from .center_loss import SetCriterion, HungarianMatcher, HungarianMatcherDynamicK
-from .center_loss_align import SetCriterion_align
+from .center_loss_align import SetCriterion_align, HungarianMatcher_align
 from ..model_utils import centernet_utils
 from scipy.ndimage.filters import gaussian_filter
 from ..model_utils import model_nms_utils
@@ -1272,11 +1272,18 @@ class Point2CenterHead(nn.Module):
                                                     cost_giou=giou_weight,
                                                     use_focal=self.use_focal)
         else:
-            self.matcher = HungarianMatcher(cfg=cfg,
-                                            cost_class=class_weight_cost,
-                                            cost_bbox=l1_weight,
-                                            cost_giou=giou_weight,
-                                            use_focal=self.use_focal)
+            if self.use_align:
+                self.matcher = HungarianMatcher_align(cfg=cfg,
+                                                cost_class=class_weight_cost,
+                                                cost_bbox=l1_weight,
+                                                cost_giou=giou_weight,
+                                                use_focal=self.use_focal)
+            else:
+                self.matcher = HungarianMatcher(cfg=cfg,
+                                                cost_class=class_weight_cost,
+                                                cost_bbox=l1_weight,
+                                                cost_giou=giou_weight,
+                                                use_focal=self.use_focal)
         weight_dict = {"loss_ce": class_weight, "loss_bbox": l1_weight, "loss_giou": giou_weight,
                        "loss_vel": vel_weight, "loss_center": center_weight, "loss_hm": heatmap_weight,
                        "loss_density": density_weight, "loss_mask": mask_weight, "loss_bbox_presudo": l1_weight}

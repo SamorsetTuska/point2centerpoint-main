@@ -99,27 +99,21 @@ class SetCriterion_align(nn.Module):
         self.pc_range = pc_range
         self.use_ota = cfg.USE_OTA
         self.use_aux = cfg.USE_AUX
-
-        # if self.use_focal:
-        #     self.focal_loss_alpha = cfg.ALPHA
-        #     self.focal_loss_gamma = cfg.GAMMA
         self.alpha = cfg.ALPHA
         self.gamma = cfg.GAMMA
-        # else:
-        #     empty_weight = torch.ones(self.num_classes + 1)
-        #     empty_weight[-1] = self.eos_coef
-        #     self.register_buffer('empty_weight', empty_weight)
 
-    def sigmoid_focal_iou_loss(self, pos_logits, pos_labels, neg_logits, neg_labels, alpha=-1, gamma=2,
+
+    def sigmoid_focal_align_loss(self, pos_logits, pos_labels, neg_logits, neg_labels, alpha=-1, gamma=2,
                                reduction="none", ):
         neg_p_t = torch.sigmoid(neg_logits.float())
         neg_labels = neg_labels.float()
         pos_p_t = torch.sigmoid(pos_logits.float())
-        pos_labels = pos_labels.float()
+        pos_labels = pos_labels.float()**(1 - alpha) * pos_p_t ** alpha
+        pos_labels = torch.clamp(pos_labels, 0.01).detach()
         neg_ce_loss = F.binary_cross_entropy(neg_p_t, neg_labels, reduction="none")
-        neg_ce_loss = neg_ce_loss * (neg_p_t ** gamma) * (1 - alpha)
+        neg_ce_loss = neg_ce_loss * (neg_p_t ** gamma)
         pos_ce_loss = F.binary_cross_entropy(pos_p_t, pos_labels, reduction="none")
-        pos_ce_loss = pos_ce_loss * ((pos_labels - pos_p_t) ** gamma) * alpha
+        # pos_ce_loss = pos_ce_loss * ((pos_labels - pos_p_t) ** gamma) * alpha
         loss = torch.cat([pos_ce_loss, neg_ce_loss], dim=0)
 
         if reduction == "mean":
@@ -161,9 +155,10 @@ class SetCriterion_align(nn.Module):
         bev_tgt_bbox[:, :3] = target_boxes_[:, :3] * grid_size_out
         bev_tgt_bbox[:, 3:6] = target_boxes_[:, 3:6] * grid_size_out
         bev_tgt_bbox[:, -1] = target_boxes[:, -1]
-        IoU = iou3d_nms_utils.boxes_iou3d_gpu(src_boxes, bev_tgt_bbox).diag().squeeze(0)
-        wrong = target_classes_o[IoU==0]
+        IoU = iou3d_nms_utils.boxes_iou_bev(src_boxes, bev_tgt_bbox).diag().squeeze(0)
+        # wrong = target_classes_o[IoU==0]
         # IoU = (IoU * IoU) / (IoU * IoU).max()
+
         alpha = 0.25
         gamma = 2.0
         tau = 1.5
@@ -183,16 +178,9 @@ class SetCriterion_align(nn.Module):
         pos_inds = torch.nonzero(target_classes != self.num_classes, as_tuple=True)[0]  # 有gt的inds
         labels = torch.zeros_like(src_logits)
         labels[pos_inds, target_classes[pos_inds]] = 1  # fg=1, bg=0,0,0
+
         l = labels.size()[-1]
-        '''
-        现在的变量有：
-        indices——8*2*不定n（和为662），每张图的box-gt对应关系
-        prob——8*2200*3，预测概率，8张图，每张图2200个box，3类
-        IoU——662——每个gt-box对的IoU
-        labels——17600*3，实际标签，背景是0，0，0
-        应该：针对每个类别，分别计算t、rank，loss
-        '''
-        loss_ce = 0
+        class_loss = 0
         for i in range(l):
             each_src_logits = src_logits[:, i]  # 单独一类的logits
             label = labels[:, i]  # 单独一类的label
@@ -238,9 +226,22 @@ class SetCriterion_align(nn.Module):
             loss = -1 * (pos_weights * prob.log() + neg_weights * (1-prob).log())  # 计算该类别的BCE
             num = len(pos_weights)
             loss = loss.sum() / num
-            loss_ce += loss
-
-        losses = {'loss_ce': loss_ce}
+            class_loss += loss
+            '''
+        labels[pos_inds, target_classes[pos_inds]] = IoU
+        pos_logits = src_logits[pos_inds, :]
+        pos_labels = labels[pos_inds, :]
+        neg_logits = src_logits[target_classes == self.num_classes, :]
+        neg_labels = labels[target_classes == self.num_classes, :]
+        class_loss = self.sigmoid_focal_align_loss(pos_logits,
+                                                 pos_labels,
+                                                 neg_logits,
+                                                 neg_labels,
+                                                 alpha=self.alpha,
+                                                 gamma=self.gamma,
+                                                 reduction="sum") / num_boxes
+            '''
+        losses = {'loss_ce': class_loss}
 
         return losses
 
@@ -498,3 +499,151 @@ def add_sin_difference_pairwise(boxes1, boxes2):
                 boxes2[j, 0])
 
     return r_sin_dist
+
+
+class HungarianMatcher_align(nn.Module):
+    """This class computes an assignment between the targets and the predictions of the network
+
+    For efficiency reasons, the targets don't include the no_object. Because of this, in general,
+    there are more predictions than targets. In this case, we do a 1-to-1 matching of the best predictions,
+    while the others are un-matched (and thus treated as non-objects).
+    """
+
+    def __init__(self, cfg, cost_class: float = 1, cost_bbox: float = 1, cost_giou: float = 1, cost_center: float = 1,
+                 use_focal: bool = False):
+        """Creates the matcher
+
+        Params:
+            cost_class: This is the relative weight of the classification error in the matching cost
+            cost_bbox: This is the relative weight of the L1 error of the bounding box coordinates in the matching cost
+            cost_giou: This is the relative weight of the giou loss of the bounding box in the matching cost
+        """
+        super().__init__()
+        self.cfg = cfg
+        self.cost_class = cost_class
+        self.cost_bbox = cost_bbox
+        self.cost_giou = cost_giou
+        self.cost_center = cost_center
+        self.use_focal = use_focal
+        self.repeat_num = 2
+
+        if self.use_focal:
+            self.focal_loss_alpha = cfg.ALPHA
+            self.focal_loss_gamma = cfg.GAMMA
+        assert cost_class != 0 or cost_bbox != 0 or cost_giou != 0, "all costs cant be 0"
+
+    @torch.no_grad()
+    def forward(self, outputs, targets):
+        """ Performs the matching
+
+        Params:
+            outputs: This is a dict that contains at least these entries:
+                 "pred_logits": Tensor of dim [batch_size, num_queries, num_classes] with the classification logits
+                 "pred_boxes": Tensor of dim [batch_size, num_queries, 4] with the predicted box coordinates
+
+            targets: This is a list of targets (len(targets) = batch_size), where each target is a dict containing:
+                 "labels": Tensor of dim [num_target_boxes] (where num_target_boxes is the number of ground-truth
+                           objects in the target) containing the class labels
+                 "boxes": Tensor of dim [num_target_boxes, 4] containing the target box coordinates
+
+        Returns:
+            A list of size batch_size, containing tuples of (index_i, index_j) where:
+                - index_i is the indices of the selected predictions (in order)
+                - index_j is the indices of the corresponding selected targets (in order)
+            For each batch element, it holds:
+                len(index_i) = len(index_j) = min(num_queries, num_target_boxes)
+        """
+        bs, num_queries = outputs["pred_logits"].shape[:2]
+        use_mto = outputs["use_mto"]
+        C = []
+        for b in range(bs):
+
+            # We flatten to compute the cost matrices in a batch
+            if self.use_focal:
+                out_prob = outputs["pred_logits"][b, ...].unsqueeze(0).flatten(0, 1).sigmoid()
+                # [batch_size * num_queries, num_classes]
+            else:
+                out_prob = outputs["pred_logits"][b, ...].unsqueeze(0).flatten(0, 1).softmax(-1)
+                # [batch_size * num_queries, num_classes]
+
+            out_bbox = outputs["pred_boxes_match"][b, ...].unsqueeze(0).flatten(0, 1)  # [batch_size * num_queries, 7]
+
+            # Also concat the target labels and boxes
+
+            tgt_ids = targets[b]["labels"]
+            tgt_bbox = targets[b]["gt_boxes"]
+
+            image_size_tgt = targets[b]["image_size_xyxy_tgt"]
+            offset = targets[b]["offset_size_xyxy_tgt"]
+            grid_size_tgt = targets[b]["grid_size_tgt"]
+            grid_size_out = targets[b]["grid_size_xyz"].unsqueeze(0).unsqueeze(1).repeat(1, num_queries, 1).flatten(0,
+                                                                                                                    1)
+
+            out_bbox_ = torch.ones_like(out_bbox, dtype=out_bbox.dtype)
+            out_bbox_[:, :3] = out_bbox[:, :3] / grid_size_out
+            out_bbox_[:, 3:6] = out_bbox[:, 3:6] / grid_size_out
+            # the recommended principal range is between [-180, 180) degrees
+            out_bbox_[:, -1] = out_bbox[:, -1]
+
+            tgt_bbox_ = torch.ones_like(tgt_bbox, dtype=tgt_bbox.dtype)
+            tgt_bbox_[:, :3] = (tgt_bbox[:, :3] - offset) / image_size_tgt
+            tgt_bbox_[:, 3:6] = (tgt_bbox[:, 3:6]) / image_size_tgt
+            tgt_bbox_[:, -1] = tgt_bbox[:, -1]
+            tgt_bbox_sin = torch.sin(tgt_bbox_[:, -1])
+            tgt_bbox_cos = torch.cos(tgt_bbox_[:, -1])
+            tgt_bbox_angle = torch.cat([tgt_bbox_sin.unsqueeze(-1), tgt_bbox_cos.unsqueeze(-1)], dim=-1)
+
+            cost_bbox = torch.cdist(out_bbox_[:, :-1], tgt_bbox_[:, :-1], p=1)
+
+            code_weight = torch.tensor([0.5, 0.5], device=cost_bbox.device)
+            out_bbox_angle = outputs['pred_rot'][b, ...].unsqueeze(0).flatten(0, 1)
+            cost_r = torch.cdist(out_bbox_angle * code_weight, tgt_bbox_angle * code_weight, p=1)
+
+            cost_bbox += cost_r
+
+            bev_tgt_bbox = torch.ones_like(tgt_bbox, dtype=tgt_bbox.dtype)
+            bev_tgt_bbox[:, :3] = tgt_bbox_[:, :3] * grid_size_tgt
+            bev_tgt_bbox[:, 3:6] = tgt_bbox_[:, 3:6] * grid_size_tgt
+            bev_tgt_bbox[:, -1] = tgt_bbox[:, -1]
+
+            ious = box_utils.boxes3d_nearest_bev_iou(out_bbox, bev_tgt_bbox)
+            # # ious = iou3d_nms_utils.boxes_iou3d_gpu(out_bbox, bev_tgt_bbox)
+            cost_giou = -ious
+
+            # out_bbox = out_bbox.unsqueeze(1).repeat(1, bev_tgt_bbox.shape[0], 1)
+            # bev_tgt_bbox = bev_tgt_bbox.unsqueeze(0).repeat(out_bbox.shape[0], 1, 1)
+            # DIoU = 1 - cal_diou_3d(out_bbox, bev_tgt_bbox)
+            # cost_giou = -DIoU
+            #
+            # diou_match = ((DIoU.max(dim=1)[0] + 1) / 2 + 1e-6).sqrt().unsqueeze(-1).repeat(1, out_prob.shape[1])
+
+            # # Compute the classification cost. Contrary to the loss, we don't use the NLL,
+            # # but approximate it in 1 - proba[target class].
+            # # The 1 is a constant that doesn't change the matching, it can be ommitted.
+            if self.use_focal:
+                # Compute the classification cost.
+                alpha = self.focal_loss_alpha
+                gamma = self.focal_loss_gamma
+                out_prob = out_prob[:, tgt_ids]
+                t = out_prob ** alpha * ious**(1 - alpha)
+                t = torch.clamp(t, 1e-6).detach()
+                # neg_cost_class = (1 - alpha) * (out_prob ** gamma) * (-(1 - out_prob + 1e-6).log())
+                # pos_cost_class = alpha * ((1 - out_prob) ** gamma) * (-(out_prob + 1e-6).log())
+                neg_cost_class = (1 - alpha) * (out_prob ** gamma) * t * (-(1 - out_prob + 1e-6).log())
+                pos_cost_class = alpha * ((1 - out_prob) ** gamma) * (1 - t) * (-(out_prob + 1e-6).log())
+
+                # cost_class = pos_cost_class[:, tgt_ids] - neg_cost_class[:, tgt_ids] # [N,M]
+                cost_class = pos_cost_class - neg_cost_class
+            else:
+                cost_class = -out_prob[:, tgt_ids]
+
+            # Final cost matrix
+            Cost = self.cost_bbox * cost_bbox + self.cost_class * cost_class + self.cost_giou * cost_giou
+            if use_mto:
+                Cost = Cost.repeat(1, self.repeat_num)
+
+            C.append(Cost)
+        indices = [linear_sum_assignment(c.cpu()) for i, c in enumerate(C)]
+        indices = [(torch.as_tensor(i, dtype=torch.int64), torch.as_tensor(j, dtype=torch.int64)) for i, j in indices]
+
+        return indices
